@@ -155,20 +155,12 @@ jobs:
           provenance: mode=max
           attest: type=sbom
 
-      # Generate a standalone SPDX SBOM JSON for human download / audit.
-      # Anchore's action scans the pushed image at the per-arch digests so
-      # the artifact reflects exactly what got published.
+      # Anchore's action scans the pushed image at the per-arch digests and
+      # uploads the SPDX JSON directly as a workflow artifact named `sbom`,
+      # so no follow-up upload step is needed.
       - name: Generate SBOM (SPDX JSON) for download
         uses: anchore/sbom-action@v0
         with:
           image: ${{ env.GHCR_IMAGE }}:${{ steps.meta.outputs.version }}
           format: spdx-json
-          artifact-name: sbom-spdx-json
-
-      - name: Upload SBOM artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: sbom
-          path: ${{ github.workspace }}/sbom-spdx-json/
-          if-no-files-found: error
-          retention-days: 30
+          artifact-name: sbom

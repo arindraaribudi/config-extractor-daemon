@@ -1,7 +1,7 @@
-IMAGE        ?= go-daemon-config-extraction:latest
+IMAGE        ?= config-extractor-daemon:latest
 PLATFORMS    := linux/amd64,linux/arm64
 BUILDER      := multiplatform-builder
-BIN          := go-daemon-config-extraction
+BIN          := config-extractor-daemon
 ENTRY        := ./cmd/config-extractor
 
 .PHONY: build push build-push load test test-race lint vet fmt fmt-check layer-check certs run run-exec install-bin clean setup-builder tidy
@@ -79,8 +79,9 @@ certs:
 	fi
 	@echo "certs: installed to internal/infrastructure/tls/certs/"
 
-## Run go vet (catches suspicious constructs)
-vet:
+## Run go vet (catches suspicious constructs). Depends on `certs` because
+## //go:embed in internal/infrastructure/tls fails without the bundle.
+vet: certs
 	go vet ./...
 
 ## Auto-format every Go file in-place

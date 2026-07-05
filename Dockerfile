@@ -12,7 +12,7 @@ ARG VERSION=dev
 ARG REVISION=unknown
 ARG BUILDDATE
 
-LABEL org.opencontainers.image.title="go-daemon-config-extraction" \
+LABEL org.opencontainers.image.title="config-extractor-daemon" \
       org.opencontainers.image.source="https://github.com/arindraaribudi/config-extractor-daemon" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${REVISION}" \

@@ -1,4 +1,4 @@
-# go-daemon-config-extraction
+# config-extractor-daemon
 
 Init-container binary: fetches a parameter store payload (GCP Parameter Manager or AWS SSM), parses it, resolves `__SECRET_REF__(uri)` placeholders via registered cloud providers, then writes `.env` or injects vars into a child process.
 
@@ -56,9 +56,9 @@ Supported URI shapes:
 
 ```bash
 go test ./... -v                                                   # run tests
-make build IMAGE=gcr.io/project/go-daemon-config-extraction:v1    # build (cache)
-make push  IMAGE=gcr.io/project/go-daemon-config-extraction:v1    # push to registry
-make load  IMAGE=go-daemon-config-extraction:v1                    # load into local Docker
+make build IMAGE=gcr.io/project/config-extractor-daemon:v1    # build (cache)
+make push  IMAGE=gcr.io/project/config-extractor-daemon:v1    # push to registry
+make load  IMAGE=config-extractor-daemon:v1                    # load into local Docker
 go run . --mode=exec -- ./cmd/env-printer/env-printer              # verify exec mode
 go run . --install /usr/local/bin                                 # install binary to a directory
 ```

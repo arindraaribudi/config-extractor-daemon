@@ -1,4 +1,4 @@
-# go-daemon-config-extraction
+# config-extractor-daemon
 
 Init-container / sidecar binary that pulls a parameter payload from **GCP Parameter Manager** or **AWS SSM Parameter Store**, parses it (JSON / YAML / `.env`), resolves `__SECRET_REF__(uri)` placeholders against a registered cloud secrets backend, then either writes a `.env` file or injects vars into a child process.
 
@@ -249,7 +249,7 @@ Copy the binary onto a shared volume so the main container can call it:
 ```yaml
 initContainers:
   - name: install-config-extractor
-    image: gcr.io/my-project/go-daemon-config-extraction:v1
+    image: gcr.io/my-project/config-extractor-daemon:v1
     args: ["--install", "/shared/bin"]
     volumeMounts:
       - name: shared-bin
@@ -258,7 +258,7 @@ initContainers:
 containers:
   - name: app
     image: my-app:v1
-    command: ["/shared/bin/go-daemon-config-extraction", "--mode=exec", "--", "/app/server"]
+    command: ["/shared/bin/config-extractor-daemon", "--mode=exec", "--", "/app/server"]
     env:
       - { name: CONFIG_LOCATION, value: "projects/my-proj/locations/global/parameters/app-config" }
       - { name: CONFIG_VERSION,  value: "prod-1" }
@@ -273,7 +273,7 @@ For `--mode=env` workloads, mount the same volume as an output dir and run witho
 containers:
   - name: app
     image: my-app:v1
-    command: ["/shared/bin/go-daemon-config-extraction", "--out", "/shared/env/.env"]
+    command: ["/shared/bin/config-extractor-daemon", "--out", "/shared/env/.env"]
     volumeMounts:
       - { name: shared-bin,  mountPath: /shared/bin }
       - { name: shared-env,  mountPath: /shared/env }
@@ -287,13 +287,13 @@ The container needs `parametermanager.parameterVersions.get` (GCP) or `ssm:GetPa
 
 ```bash
 # local single-arch (loads into Docker)
-make load IMAGE=go-daemon-config-extraction:v1
+make load IMAGE=config-extractor-daemon:v1
 
 # multi-arch build (cache only)
-make build IMAGE=gcr.io/my-project/go-daemon-config-extraction:v1
+make build IMAGE=gcr.io/my-project/config-extractor-daemon:v1
 
 # multi-arch build + push
-make push IMAGE=gcr.io/my-project/go-daemon-config-extraction:v1
+make push IMAGE=gcr.io/my-project/config-extractor-daemon:v1
 
 # tests
 make test           # = go test ./... -v

@@ -130,7 +130,14 @@ func run(args []string, deps cliDeps) int {
 
 	loaded, err := loadUC.Run(context.Background(), location, version, fetchMode)
 	if err != nil {
-		return fatalf(logger, 1, "%v", err)
+		// --strict-fetch=false softens "no source matches" so missing cloud
+		// credentials in dev/CI don't crash on first run; everything else
+		// (parse errors, transport failures) still propagates.
+		if !*strictFetch && errors.Is(err, domain.ErrNoSource) {
+			logger.Printf("WARNING: %v — continuing without config", err)
+		} else {
+			return fatalf(logger, 1, "%v", err)
+		}
 	}
 
 	// 3) Parse payload → resolve secret refs → write or exec.
