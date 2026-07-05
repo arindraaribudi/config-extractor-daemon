@@ -1,0 +1,25 @@
+# golangci-lint config — used when the binary is available locally/CI.
+# `make lint` currently runs go vet + gofmt + layer-import guard, which is
+# sufficient for this codebase. Install golangci-lint and run it manually
+# if/when stricter checks are needed.
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck      # unchecked errors
+    - gosimple      # simplifications
+    - govet         # go vet
+    - ineffassign   # unused assignments
+    - staticcheck   # bug finder (subset of govet's strict checks)
+    - unused        # unused identifiers
+    - gofmt         # formatting
+    - goimports     # import grouping
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck

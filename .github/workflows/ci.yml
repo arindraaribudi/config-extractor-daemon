@@ -1,0 +1,174 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+      - release-*
+    tags: ["v*"]
+  pull_request: {}
+  workflow_dispatch:
+
+# Cancel in-progress runs of the same workflow on the same ref — saves CI minutes
+# when pushing follow-up commits to a PR/branch.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# All three jobs (lint, test, publish) have no `needs:` between them — they
+# start in parallel. publish gates itself on event type (main push / tag) so
+# PRs run lint + test only.
+#
+# Configuration:
+#   vars.GHCR_IMAGE  Destination image, e.g. `ghcr.io/myorg/myapp`.
+#                    Falls back to the personal GHCR path below when unset.
+#                    Set in repo Settings → Variables → Actions.
+
+env:
+  GHCR_IMAGE: ${{ vars.GHCR_IMAGE || 'ghcr.io/arindraaribudi/config-extractor-daemon' }}
+jobs:
+  # ── lint ───────────────────────────────────────────────────────────────────
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.4"
+          cache: true
+
+      - name: Restore go modules cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+
+      - name: Run make lint
+        run: make lint
+
+  # ── unit tests ─────────────────────────────────────────────────────────────
+  test:
+    name: unit-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.4"
+          cache: true
+
+      - name: Restore go modules cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+
+      # Race detector proves the concurrent paths are safe; coverage mode
+      # is what powers the README badge and CI artifact below.
+      - name: Run unit tests with race detector
+        run: make test-race
+
+      # Coverage run writes coverage.out / coverage.html / coverage.txt
+      # at the repo root. The HTML is browsable, the .out is consumable
+      # by `go tool cover`, and the .txt is a paste-friendly summary
+      # whose last line is the statement % used in the README badge.
+      - name: Generate coverage report
+        run: make test-coverage
+
+      # Surface the total % in the job log so it shows up in the PR
+      # checks summary without opening the artifact.
+      - name: Echo coverage summary
+        run: tail -n 1 coverage.txt
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: |
+            coverage.out
+            coverage.html
+            coverage.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  # ── publish to ghcr (multi-platform + SBOM) ─────────────────────────────────
+  publish:
+    name: publish-ghcr
+    runs-on: ubuntu-latest
+    # Only publish on pushes to main and on version tags. PRs and feature
+    # branches never produce a public image.
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    permissions:
+      contents: read
+      packages: write # required for ghcr.io push + attestation push
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.GHCR_IMAGE }}
+          # On main: :main + git sha. On tag vX.Y.Z: :vX.Y.Z, :X.Y, :X, :latest.
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha,format=long
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build multi-platform image with embedded SBOM + SLSA provenance
+      # attestations. `attest: type=sbom` makes BuildKit (Syft under the
+      # hood) generate an SPDX SBOM per platform and attach it as an
+      # in-toto attestation to the image manifest — visible in GHCR's
+      # "Attestations" tab and consumable by `cosign verify-attestation`.
+      # `provenance: mode=max` adds SLSA build provenance.
+      - name: Build and push (multi-arch + SBOM + provenance)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: mode=max
+          attest: type=sbom
+
+      # Generate a standalone SPDX SBOM JSON for human download / audit.
+      # Anchore's action scans the pushed image at the per-arch digests so
+      # the artifact reflects exactly what got published.
+      - name: Generate SBOM (SPDX JSON) for download
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.GHCR_IMAGE }}:${{ steps.meta.outputs.version }}
+          format: spdx-json
+          artifact-name: sbom-spdx-json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: ${{ github.workspace }}/sbom-spdx-json/
+          if-no-files-found: error
+          retention-days: 30

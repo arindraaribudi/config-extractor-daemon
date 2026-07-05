@@ -1,0 +1,9 @@
+.claude
+.env
+go-daemon-config-extraction
+env-printer
+
+# Generated CA bundle — recreated by `make certs` (local) or the Dockerfile
+# (CI). Not committed because it rotates and adds noise to the diff.
+internal/infrastructure/tls/certs/ca-certificates.crt
+coverage.out

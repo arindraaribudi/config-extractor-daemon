@@ -1,0 +1,39 @@
+# Build context filter — keeps the builder image small and rebuilds fast.
+# Anything NOT needed at compile time lives here.
+
+# Git + tooling
+.git/
+.gitignore
+.gitattributes
+.github/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+
+# Local config / state
+.env
+.envrc
+.DS_Store
+*.log
+
+# CI metadata
+.codegraph/
+.claude/
+
+# Build output
+config-extractor
+go-daemon-config-extraction
+env-printer
+
+# Generated CA bundle (re-created inside the builder at build time)
+internal/infrastructure/tls/certs/ca-certificates.crt
+
+# Old repo-root cert stash (no longer used)
+certs/
+
+# Tests stay — `go test ./...` is not run inside the image, but the test
+# files are tiny and harmless. Remove the next line if you want a strict
+# production-only context.
+**/*_test.go
