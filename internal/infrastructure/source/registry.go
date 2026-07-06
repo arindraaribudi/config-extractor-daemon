@@ -27,9 +27,9 @@ type Entry struct {
 
 // Sources is the global list of available config providers.
 //
-// To add a new cloud (Azure / Vault / etc.):
-//  1. Create a new file in this package, e.g. azure.go, that exports a
-//     `NewAzureSource(ctx, mode) (domain.ConfigSource, error)` factory.
+// To add a new cloud (e.g. Azure):
+//  1. Create a new file in this package that exports a
+//     `NewXxxSource(ctx, mode) (domain.ConfigSource, error)` factory.
 //  2. Append one entry below.
 //
 // Domain, application, and cmd/ require zero changes.
@@ -40,8 +40,13 @@ var Sources = []Entry{
 		Factory: NewAWSSource,
 	},
 	{
+		Kind:    domain.ProviderTencent,
+		Match:   isTencentLocation,
+		Factory: NewTencentSource,
+	},
+	{
 		Kind:    domain.ProviderGCP,
-		Match:   func(string) bool { return true }, // GCP is the fallback for any non-AWS location
+		Match:   func(string) bool { return true }, // GCP is the fallback for any non-AWS, non-Tencent location
 		Factory: NewGCPSource,
 	},
 }

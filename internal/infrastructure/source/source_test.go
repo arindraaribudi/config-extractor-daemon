@@ -111,21 +111,24 @@ func TestGCPSource_CloseNilSafe(t *testing.T) {
 }
 
 func TestRegistry_OrderMatters(t *testing.T) {
-	if len(Sources) < 2 {
-		t.Fatalf("expected at least 2 sources, got %d", len(Sources))
+	if len(Sources) < 3 {
+		t.Fatalf("expected at least 3 sources, got %d", len(Sources))
 	}
 	if Sources[0].Kind != domain.ProviderAWS {
 		t.Errorf("first source kind = %q, want aws", Sources[0].Kind)
 	}
-	if Sources[1].Kind != domain.ProviderGCP {
-		t.Errorf("second source kind = %q, want gcp", Sources[1].Kind)
+	if Sources[1].Kind != domain.ProviderTencent {
+		t.Errorf("second source kind = %q, want tencent", Sources[1].Kind)
+	}
+	if Sources[2].Kind != domain.ProviderGCP {
+		t.Errorf("third source kind = %q, want gcp", Sources[2].Kind)
 	}
 }
 
 func TestRegistry_GCPMatchAcceptsEverything(t *testing.T) {
 	// The GCP entry's Match is `func(string) bool { return true }` — it
-	// must accept any location, since AWS already claimed the SSM-shaped
-	// ones and everything else is GCP's.
+	// must accept any location, since AWS and Tencent already claimed
+	// their respective shapes and everything else is GCP's.
 	cases := []string{
 		"projects/p/locations/l/parameters/x",
 		"arn:aws:ssm:us-east-1:123:parameter/x",
@@ -133,8 +136,8 @@ func TestRegistry_GCPMatchAcceptsEverything(t *testing.T) {
 		"",
 	}
 	for _, loc := range cases {
-		if !Sources[1].Match(loc) {
-			t.Errorf("Sources[1].Match(%q) = false, want true (GCP is fallback)", loc)
+		if !Sources[2].Match(loc) {
+			t.Errorf("Sources[2].Match(%q) = false, want true (GCP is fallback)", loc)
 		}
 	}
 }

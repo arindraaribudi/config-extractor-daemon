@@ -27,4 +27,5 @@ type ResolverEntry struct {
 var Resolvers = []ResolverEntry{
 	{Kind: domain.ProviderGCP, Resolver: NewGCPResolver()},
 	{Kind: domain.ProviderAWS, Resolver: NewAWSResolver()},
+	{Kind: domain.ProviderTencent, Resolver: NewTencentResolver()},
 }

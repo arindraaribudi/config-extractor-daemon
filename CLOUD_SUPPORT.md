@@ -128,6 +128,55 @@ Resolve path:
 4. return SecretString (binary secrets → error)
 ```
 
+## Tencent Cloud
+
+### Detection
+
+`isTencentLocation(location)` in `internal/infrastructure/source/registry.go` matches
+URLs whose scheme is `https`, host contains `.cos.`, and host ends with
+`.myqcloud.com`. Examples:
+
+- `https://cds-oms-sit-1409486316.cos.ap-bangkok.myqcloud.com/projects/my-proj/parameters/appconfig`
+
+Bucket name and region are extracted from the URL host. `CONFIG_VERSION` is
+appended as the final object-key segment.
+
+### Fetcher
+
+`NewTencentSource(ctx, mode)` returns a `tencentSource` (`internal/infrastructure/source/tencent.go`)
+backed by `github.com/tencentyun/cos-go-sdk-v5`. Only the `get` mode is
+supported; `render` returns `domain.ErrUnsupportedMode` (COS stores raw
+bytes, no template rendering).
+
+### Secret resolution
+
+`__SECRET_REF__(secretsmanager.tencentcloudapi.com/{region}/{secret-name})`
+dispatches to `tencentResolver` (`internal/infrastructure/secrets/tencent.go`),
+which calls `ssm.v20190923.GetSecretValue` via the official
+tencentcloud-sdk-go sub-package. Binary secrets are rejected with an error
+(matching the AWS limitation).
+
+### Credentials
+
+`internal/infrastructure/tencentcred` resolves AK/SK in this order:
+
+1. `TENCENTCLOUD_SECRETID` + `TENCENTCLOUD_SECRETKEY` env vars.
+2. CVM/TKE metadata server (`http://metadata.tencentyun.com/latest/meta-data/cam/security-credentials/<role>`).
+3. Error if neither path yields a pair.
+
+The resolved pair is cached for process lifetime so a single Fetch that
+runs both source and secret resolution hits the network once.
+
+### End-to-end flow
+
+1. Resolve AK/SK via `tencentcred.Resolve(ctx)`.
+2. Build COS client (`cos-go-sdk-v5`).
+3. Build Secrets Manager client (lazy, only if a secret ref is present).
+4. `tencentSource.Fetch` → `cos.Object.Get(key)` → payload bytes.
+5. `ParsePayload` → `EnvPair` slice.
+6. `ResolveSecretRefs` → resolved pairs (tencent resolver claims `secretsmanager.tencentcloudapi.com/...`).
+7. Write `.env` or `exec` inject.
+
 ## End-to-End Example (AWS)
 
 Parameter URI (SSM):

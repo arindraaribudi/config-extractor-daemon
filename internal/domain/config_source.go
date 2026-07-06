@@ -8,8 +8,9 @@ import "context"
 type ProviderKind string
 
 const (
-	ProviderGCP ProviderKind = "gcp"
-	ProviderAWS ProviderKind = "aws"
+	ProviderGCP     ProviderKind = "gcp"
+	ProviderAWS     ProviderKind = "aws"
+	ProviderTencent ProviderKind = "tencent"
 )
 
 // Reference describes WHERE a config lives and WHICH version to read.

@@ -29,6 +29,17 @@ export CONFIG_VERSION="SIT-1"
 go run ./cmd/config-extractor                              # writes ./env
 ```
 
+### Tencent Cloud
+
+```bash
+export CONFIG_LOCATION="https://cds-oms-sit-1409486316.cos.ap-bangkok.myqcloud.com/projects/my-proj/parameters/appconfig"
+export CONFIG_VERSION="ENV-1"
+# TENCENTCLOUD_SECRETID + TENCENTCLOUD_SECRETKEY env vars
+# OR a CAM role attached to the CVM/TKE instance
+
+go run ./cmd/config-extractor                              # writes ./env
+```
+
 ### Install-only (no cloud credentials needed)
 
 ```bash
@@ -71,10 +82,12 @@ Detection / format / provider dispatch is automatic — only `CONFIG_LOCATION` s
 
 | Var | Required | Default | Notes |
 |---|---|---|---|
-| `CONFIG_LOCATION` | yes | — | GCP: `projects/{p}/locations/{l}/parameters/{id}`. AWS: `arn:aws:ssm:{region}:{account}:parameter/{path}` or bare `/{path}` (region from `AWS_REGION`). |
+| `CONFIG_LOCATION` | yes | — | GCP: `projects/{p}/locations/{l}/parameters/{id}`. AWS: `arn:aws:ssm:{region}:{account}:parameter/{path}` or bare `/{path}` (region from `AWS_REGION`). Tencent: `https://{bucket}-{appid}.cos.{region}.myqcloud.com/{key-prefix}` (region + bucket derived from URL host; `CONFIG_VERSION` appended as final key segment). |
 | `CONFIG_VERSION` | yes | — | Version label, e.g. `dev-1`, `SIT-1`, `prod-2025-11-12`. |
-| `CONFIG_FETCH_MODE` | no | `get` | `get` (raw payload) or `render` (GCP only — resolves template vars). AWS rejects `render`. |
+| `CONFIG_FETCH_MODE` | no | `get` | `get` (raw payload) or `render` (GCP only — resolves template vars). AWS and Tencent reject `render`. |
 | `AWS_REGION` | AWS only | — | Required when `CONFIG_LOCATION` is a bare parameter path; ignored if the ARN already encodes the region. |
+| `TENCENTCLOUD_SECRETID` | no | — | Tencent Cloud API AK. Optional when running on CVM/TKE with a CAM role attached. |
+| `TENCENTCLOUD_SECRETKEY` | no | — | Tencent Cloud API SK. Same precedence rule. |
 
 ---
 
@@ -158,6 +171,7 @@ After resolution: `secret refs: 2 placeholder(s) resolved, 1 var(s) updated`.
 | GCP Secret Manager | `secretmanager.googleapis.com/projects/{p}/secrets/{s}/versions/{v}` |
 | AWS Secrets Manager (legacy) | `secretsmanager.amazonaws.com/{region}/{secret-id}` |
 | AWS Secrets Manager (regional) | `secretsmanager.{region}.amazonaws.com/projects/{account}/secrets/{secret-id}` |
+| Tencent Secrets Manager | `secretsmanager.tencentcloudapi.com/{region}/{secret-name}` |
 
 ### URI normalisation
 
@@ -181,6 +195,7 @@ __SECRET_REF__('//secretmanager.googleapis.com/projects/123/secrets/foo/versions
 |---|---|
 | GCP Secret Manager | `secretmanager.versions.access` |
 | AWS Secrets Manager | `secretsmanager:GetSecretValue` on the secret |
+| Tencent Secrets Manager | `cam:QueryCAMRole` + the policy attached to your CAM role granting `GetSecretValue` on the secret |
 
 ---
 
@@ -239,6 +254,38 @@ To resolve template variables stored in the payload (e.g. `__REF__(other-param)`
 ```bash
 CONFIG_FETCH_MODE=render go run .
 ```
+
+---
+
+## Sample — Tencent end-to-end
+
+Object at `https://cds-oms-sit-1409486316.cos.ap-bangkok.myqcloud.com/projects/my-proj/parameters/appconfig/ENV-1` (COS object key, JSON payload):
+
+```json
+{
+  "APP_PORT": "8080",
+  "DB_PASSWORD": "__SECRET_REF__(secretsmanager.tencentcloudapi.com/ap-bangkok/db-pass-1)"
+}
+```
+
+Run:
+
+```bash
+export CONFIG_LOCATION="https://cds-oms-sit-1409486316.cos.ap-bangkok.myqcloud.com/projects/my-proj/parameters/appconfig"
+export CONFIG_VERSION="ENV-1"
+export TENCENTCLOUD_SECRETID="AKIDxxxxxxxxxxxxxxxxxxxx"
+export TENCENTCLOUD_SECRETKEY="xxxxxxxxxxxxxxxxxxxxxxxx"
+go run . --mode=env --out=/tmp/.env
+```
+
+Resulting `/tmp/.env`:
+
+```
+APP_PORT=8080
+DB_PASSWORD=<real-secret>
+```
+
+`render` mode is rejected for Tencent — COS stores raw bytes, no template rendering.
 
 ---
 
