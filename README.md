@@ -34,8 +34,10 @@ go run ./cmd/config-extractor                              # writes ./env
 ```bash
 export CONFIG_LOCATION="https://cds-oms-sit-1409486316.cos.ap-bangkok.myqcloud.com/projects/my-proj/parameters/appconfig"
 export CONFIG_VERSION="ENV-1"
-# TENCENTCLOUD_SECRETID + TENCENTCLOUD_SECRETKEY env vars
-# OR a CAM role attached to the CVM/TKE instance
+# TENCENTCLOUD_SECRET_ID + TENCENTCLOUD_SECRET_KEY env vars
+# OR TKE pod identity (TKE_ROLE_ARN + TKE_WEB_IDENTITY_TOKEN_FILE)
+# OR `tccli sso login` (writes to ~/.tccli/default.credential)
+# OR a ~/.tencentcloud/credentials [default] profile
 
 go run ./cmd/config-extractor                              # writes ./env
 ```
@@ -86,8 +88,10 @@ Detection / format / provider dispatch is automatic — only `CONFIG_LOCATION` s
 | `CONFIG_VERSION` | yes | — | Version label, e.g. `dev-1`, `SIT-1`, `prod-2025-11-12`. |
 | `CONFIG_FETCH_MODE` | no | `get` | `get` (raw payload) or `render` (GCP only — resolves template vars). AWS and Tencent reject `render`. |
 | `AWS_REGION` | AWS only | — | Required when `CONFIG_LOCATION` is a bare parameter path; ignored if the ARN already encodes the region. |
-| `TENCENTCLOUD_SECRETID` | no | — | Tencent Cloud API AK. Optional when running on CVM/TKE with a CAM role attached. |
-| `TENCENTCLOUD_SECRETKEY` | no | — | Tencent Cloud API SK. Same precedence rule. |
+| `TENCENTCLOUD_SECRET_ID` | no | — | Tencent Cloud API AK. Optional when running on TKE with pod identity, or when a `~/.tencentcloud/credentials` profile is set. |
+| `TENCENTCLOUD_SECRET_KEY` | no | — | Tencent Cloud API SK. Same precedence rule. |
+| `TKE_ROLE_ARN` | no | — | Tencent CAM role ARN. Required for TKE pod identity STS (highest precedence). |
+| `TKE_WEB_IDENTITY_TOKEN_FILE` | no | — | Path to the JWT mounted by TKE pod identity. Required alongside `TKE_ROLE_ARN`. |
 
 ---
 
@@ -273,8 +277,8 @@ Run:
 ```bash
 export CONFIG_LOCATION="https://cds-oms-sit-1409486316.cos.ap-bangkok.myqcloud.com/projects/my-proj/parameters/appconfig"
 export CONFIG_VERSION="ENV-1"
-export TENCENTCLOUD_SECRETID="AKIDxxxxxxxxxxxxxxxxxxxx"
-export TENCENTCLOUD_SECRETKEY="xxxxxxxxxxxxxxxxxxxxxxxx"
+export TENCENTCLOUD_SECRET_ID="AKIDxxxxxxxxxxxxxxxxxxxx"
+export TENCENTCLOUD_SECRET_KEY="xxxxxxxxxxxxxxxxxxxxxxxx"
 go run . --mode=env --out=/tmp/.env
 ```
 

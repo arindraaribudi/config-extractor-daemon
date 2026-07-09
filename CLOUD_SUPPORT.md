@@ -158,14 +158,26 @@ tencentcloud-sdk-go sub-package. Binary secrets are rejected with an error
 
 ### Credentials
 
-`internal/infrastructure/tencentcred` resolves AK/SK in this order:
+`internal/infrastructure/tencentcred` walks a chain of credential
+sources, first non-nil wins:
 
-1. `TENCENTCLOUD_SECRETID` + `TENCENTCLOUD_SECRETKEY` env vars.
-2. CVM/TKE metadata server (`http://metadata.tencentyun.com/latest/meta-data/cam/security-credentials/<role>`).
-3. Error if neither path yields a pair.
+1. **TKE pod identity STS** — `TKE_ROLE_ARN` + `TKE_WEB_IDENTITY_TOKEN_FILE`
+   (and optional `TKE_PROVIDER_ID` / `TKE_REGION`). Exchanges the JWT for
+   temp creds via the SDK's `DefaultTkeOIDCRoleArnProvider`.
+2. **Env vars** — `TENCENTCLOUD_SECRET_ID` + `TENCENTCLOUD_SECRET_KEY`
+   (via `DefaultEnvProvider`).
+3. **tccli SSO** — `~/.tccli/default.credential` (JSON, written by
+   `tccli sso login`). Parsed in-process; the SDK's profile provider
+   only understands INI, so we read this JSON ourselves.
+4. **tccli INI profile** — `~/.tencentcloud/credentials` `[default]`
+   section (via `DefaultProfileProvider`).
+5. Error if no source yields a pair.
 
 The resolved pair is cached for process lifetime so a single Fetch that
 runs both source and secret resolution hits the network once.
+
+Note: env var names use the SDK's defaults (`SECRET_ID` / `SECRET_KEY`,
+underscore-separated), not the legacy `SECRETID` / `SECRETKEY` form.
 
 ### End-to-end flow
 

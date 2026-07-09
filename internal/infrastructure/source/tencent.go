@@ -55,7 +55,7 @@ func parseTencentLocation(location, version string) (bucket, region, key string,
 	if path == "" {
 		return "", "", "", fmt.Errorf("tencent cos: location %q has empty path", location)
 	}
-	key = path + "/" + version
+	key = path + "/versions/" + version
 	return bucket, region, key, nil
 }
 
@@ -77,10 +77,14 @@ var cosNewClient = func(bucket, region string, creds *tencentcred.Credentials) (
 		return nil, err
 	}
 	baseURL := &cos.BaseURL{BucketURL: u}
-	httpClient := &http.Client{Transport: &cos.AuthorizationTransport{
+	auth := &cos.AuthorizationTransport{
 		SecretID:  creds.SecretID,
 		SecretKey: creds.SecretKey,
-	}}
+	}
+	if creds.Token != "" {
+		auth.SessionToken = creds.Token
+	}
+	httpClient := &http.Client{Transport: auth}
 	client := cos.NewClient(baseURL, httpClient)
 	return client.Object, nil
 }

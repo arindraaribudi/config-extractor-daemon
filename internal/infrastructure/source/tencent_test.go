@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/arindraaribudi/config-extractor-daemon/internal/domain"
+	"github.com/arindraaribudi/config-extractor-daemon/internal/infrastructure/tencentcred"
 )
 
 func TestParseTencentLocation(t *testing.T) {
@@ -18,12 +19,12 @@ func TestParseTencentLocation(t *testing.T) {
 		wantErrSub string
 	}{
 		{
-			name:       "full URL with version appended",
+			name:       "full URL with versions segment",
 			location:   "https://cds-oms-sit-1409486316.cos.ap-bangkok.myqcloud.com/projects/my-proj/parameters/appconfig",
 			version:    "ENV-1",
 			wantBucket: "cds-oms-sit-1409486316",
 			wantRegion: "ap-bangkok",
-			wantKey:    "projects/my-proj/parameters/appconfig/ENV-1",
+			wantKey:    "projects/my-proj/parameters/appconfig/versions/ENV-1",
 		},
 		{
 			name:       "URL with single-segment path",
@@ -31,7 +32,15 @@ func TestParseTencentLocation(t *testing.T) {
 			version:    "v1",
 			wantBucket: "bucket-123",
 			wantRegion: "ap-shanghai",
-			wantKey:    "cfg/v1",
+			wantKey:    "cfg/versions/v1",
+		},
+		{
+			name:       "dev-1 regression",
+			location:   "https://cds-stk-dev-1409486316.cos.ap-bangkok.myqcloud.com/projects/cds-stk/parameters",
+			version:    "dev-1",
+			wantBucket: "cds-stk-dev-1409486316",
+			wantRegion: "ap-bangkok",
+			wantKey:    "projects/cds-stk/parameters/versions/dev-1",
 		},
 		{
 			name:       "non-https scheme rejected",
@@ -107,5 +116,29 @@ func TestTencentSource_Fetch_LocationError(t *testing.T) {
 	}, domain.FetchGet)
 	if err == nil {
 		t.Fatal("expected error for http scheme")
+	}
+}
+
+func TestNewTencentSource_STSTokenWiring(t *testing.T) {
+	prevNew := cosNewClient
+	defer func() { cosNewClient = prevNew }()
+
+	var captured *tencentcred.Credentials
+	cosNewClient = func(bucket, region string, creds *tencentcred.Credentials) (cosObjectGetResult, error) {
+		captured = creds
+		return nil, nil
+	}
+
+	t.Setenv("TENCENTCLOUD_SECRETID", "")
+	t.Setenv("TENCENTCLOUD_SECRETKEY", "")
+	t.Setenv("TENCENTCLOUD_TOKEN", "")
+	tencentcred.ResetForTest()
+
+	creds := &tencentcred.Credentials{SecretID: "s", SecretKey: "k", Token: "the-token"}
+	if _, err := cosNewClient("bucket", "ap-bangkok", creds); err != nil {
+		t.Fatal(err)
+	}
+	if captured == nil || captured.Token != "the-token" {
+		t.Fatalf("expected Token=%q passed through, got captured=%+v", "the-token", captured)
 	}
 }
