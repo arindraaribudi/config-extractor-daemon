@@ -12,6 +12,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.41.3
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.68.3
 	github.com/googleapis/gax-go/v2 v2.15.0
+	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.3.121
+	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/ssm v1.3.121
+	github.com/tencentyun/cos-go-sdk-v5 v0.7.74
 	google.golang.org/api v0.247.0
 	google.golang.org/grpc v1.74.2
 	gopkg.in/yaml.v3 v3.0.1
@@ -43,9 +46,6 @@ require (
 	github.com/googleapis/enterprise-certificate-proxy v0.3.6 // indirect
 	github.com/mitchellh/mapstructure v1.4.3 // indirect
 	github.com/mozillazg/go-httpheader v0.2.1 // indirect
-	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.3.121 // indirect
-	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/ssm v1.3.121 // indirect
-	github.com/tencentyun/cos-go-sdk-v5 v0.7.74 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.61.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.61.0 // indirect

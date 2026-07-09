@@ -1,5 +1,7 @@
 .claude
+.env.**
 .env
+!.env.sample
 go-daemon-config-extraction
 env-printer
 

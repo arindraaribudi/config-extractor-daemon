@@ -100,9 +100,16 @@ layer-check:
 	if [ -n "$$bad" ]; then echo "layer violation (SDK in domain/application):"; echo "$$bad"; exit 1; fi; \
 	echo "layer-check: clean (no SDK imports in domain or application)"
 
-## Run locally in env mode — writes .env file (requires CONFIG_LOCATION and CONFIG_VERSION)
+## Run locally in env mode — writes $(OUT) (defaults to .env).
+## CONFIG_LOCATION and CONFIG_VERSION must be exported in the calling shell
+## (e.g. `CONFIG_LOCATION=... CONFIG_VERSION=... make run`).
 OUT ?= .env
 run:
+	@if [ -z "$$CONFIG_LOCATION" ] || [ -z "$$CONFIG_VERSION" ]; then \
+		echo "make run: CONFIG_LOCATION and CONFIG_VERSION are required"; \
+		echo "  example: CONFIG_LOCATION=arn:aws:ssm:ap-southeast-1:111:parameter/dev CONFIG_VERSION=dev-1 make run"; \
+		exit 1; \
+	fi
 	go run $(ENTRY) --mode=env --out=$(OUT)
 
 ## Run locally in exec mode — injects env into a child process
