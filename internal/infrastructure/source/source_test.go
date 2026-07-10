@@ -430,3 +430,65 @@ func TestNewAWSSource_LoadConfigError(t *testing.T) {
 		t.Errorf("expected wrapped config error, got %v", err)
 	}
 }
+
+func TestDetectAWSCredSource_PriorityOrder(t *testing.T) {
+	noop := func(string) string { return "" }
+	cases := []struct {
+		name   string
+		env    map[string]string
+		expect string
+	}{
+		{"irsa beats everything", map[string]string{"AWS_WEB_IDENTITY_TOKEN_FILE": "/t", "AWS_ROLE_ARN": "r", "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI": "x", "AWS_ACCESS_KEY_ID": "k", "AWS_SECRET_ACCESS_KEY": "s", "AWS_PROFILE": "p"}, "irsa-web-identity"},
+		{"ecs beats env", map[string]string{"AWS_CONTAINER_CREDENTIALS_RELATIVE_URI": "x", "AWS_ACCESS_KEY_ID": "k", "AWS_SECRET_ACCESS_KEY": "s"}, "ecs-container-role"},
+		{"env beats profile", map[string]string{"AWS_ACCESS_KEY_ID": "k", "AWS_SECRET_ACCESS_KEY": "s", "AWS_PROFILE": "p"}, "env-vars"},
+		{"profile alone", map[string]string{"AWS_PROFILE": "p"}, "shared-config"},
+		{"irsa requires both", map[string]string{"AWS_WEB_IDENTITY_TOKEN_FILE": "/t"}, "imds-v2"},
+		{"env requires both keys", map[string]string{"AWS_ACCESS_KEY_ID": "k"}, "imds-v2"},
+		{"nothing set", nil, "imds-v2"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			getenv := func(k string) string {
+				if tc.env == nil {
+					return ""
+				}
+				return tc.env[k]
+			}
+			if got := DetectAWSCredSource(getenv); got != tc.expect {
+				t.Errorf("got %q, want %q", got, tc.expect)
+			}
+			if got := DetectAWSCredSource(noop); got != "imds-v2" {
+				t.Errorf("empty env: got %q, want imds-v2", got)
+			}
+		})
+	}
+}
+
+func TestDetectGCPCredSource_PriorityOrder(t *testing.T) {
+	noop := func(string) string { return "" }
+	cases := []struct {
+		name   string
+		env    map[string]string
+		expect string
+	}{
+		{"sa key file beats k8s", map[string]string{"GOOGLE_APPLICATION_CREDENTIALS": "/sa.json", "KUBERNETES_SERVICE_HOST": "k8s"}, "service-account-key-file"},
+		{"k8s without sa key", map[string]string{"KUBERNETES_SERVICE_HOST": "k8s"}, "gke-workload-identity"},
+		{"nothing set", nil, "adc-default"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			getenv := func(k string) string {
+				if tc.env == nil {
+					return ""
+				}
+				return tc.env[k]
+			}
+			if got := DetectGCPCredSource(getenv); got != tc.expect {
+				t.Errorf("got %q, want %q", got, tc.expect)
+			}
+			if got := DetectGCPCredSource(noop); got != "adc-default" {
+				t.Errorf("empty env: got %q, want adc-default", got)
+			}
+		})
+	}
+}

@@ -31,6 +31,37 @@ var loadAWSConfig = func(ctx context.Context, region string) (aws.Config, error)
 	)
 }
 
+// DetectAWSCredSource reports the most likely AWS credential source in
+// use, based on environment variables. Heuristic — the SDK does not
+// expose which provider in the default chain actually resolved, so this
+// inspects the same env vars AWS SDK providers look at and returns the
+// first match. Priority (first match wins):
+//
+//	AWS_WEB_IDENTITY_TOKEN_FILE + AWS_ROLE_ARN → irsa-web-identity (EKS pod identity)
+//	AWS_CONTAINER_CREDENTIALS_RELATIVE_URI/FULL_URI → ecs-container-role
+//	AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY → env-vars
+//	AWS_PROFILE → shared-config (~/.aws/credentials)
+//	else → imds-v2 (EC2 instance metadata, default chain tail)
+func DetectAWSCredSource(getenv func(string) string) string {
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	if getenv("AWS_WEB_IDENTITY_TOKEN_FILE") != "" && getenv("AWS_ROLE_ARN") != "" {
+		return "irsa-web-identity"
+	}
+	if getenv("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI") != "" ||
+		getenv("AWS_CONTAINER_CREDENTIALS_FULL_URI") != "" {
+		return "ecs-container-role"
+	}
+	if getenv("AWS_ACCESS_KEY_ID") != "" && getenv("AWS_SECRET_ACCESS_KEY") != "" {
+		return "env-vars"
+	}
+	if getenv("AWS_PROFILE") != "" {
+		return "shared-config"
+	}
+	return "imds-v2"
+}
+
 func NewAWSSource(ctx context.Context, _ domain.FetchMode) (domain.ConfigSource, error) {
 	region := os.Getenv("AWS_REGION")
 	if region == "" {
@@ -44,6 +75,7 @@ func NewAWSSource(ctx context.Context, _ domain.FetchMode) (domain.ConfigSource,
 		return nil, fmt.Errorf("aws ssm: load default config: %w", err)
 	}
 
+	log.Printf("aws creds: source=%s region=%s", DetectAWSCredSource(os.Getenv), region)
 	return &awsSource{client: ssm.NewFromConfig(cfg)}, nil
 }
 

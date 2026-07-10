@@ -3,6 +3,8 @@ package source
 import (
 	"context"
 	"fmt"
+	"log"
+	"os"
 
 	parametermanager "cloud.google.com/go/parametermanager/apiv1"
 	parametermanagerpb "cloud.google.com/go/parametermanager/apiv1/parametermanagerpb"
@@ -30,6 +32,27 @@ var newParameterManagerClient = func(ctx context.Context) (gcpClient, error) {
 	return c, nil
 }
 
+// DetectGCPCredSource reports the most likely GCP Application Default
+// Credentials (ADC) source in use. Heuristic — the GCP SDK resolves ADC
+// transparently and does not expose which provider yielded creds, so we
+// inspect the env vars ADC looks at. Priority (first match wins):
+//
+//	GOOGLE_APPLICATION_CREDENTIALS → service-account-key-file
+//	KUBERNETES_SERVICE_HOST (no SA key) → gke-workload-identity
+//	else → adc-default (GCE metadata server, gcloud user creds, etc.)
+func DetectGCPCredSource(getenv func(string) string) string {
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	if getenv("GOOGLE_APPLICATION_CREDENTIALS") != "" {
+		return "service-account-key-file"
+	}
+	if getenv("KUBERNETES_SERVICE_HOST") != "" {
+		return "gke-workload-identity"
+	}
+	return "adc-default"
+}
+
 // gcpSource fetches payloads from GCP Parameter Manager.
 //
 // Supports both `get` (raw stored payload) and `render` (template-rendered
@@ -43,6 +66,7 @@ func NewGCPSource(ctx context.Context, _ domain.FetchMode) (domain.ConfigSource,
 	if err != nil {
 		return nil, fmt.Errorf("gcp parametermanager client: %w", err)
 	}
+	log.Printf("gcp creds: source=%s", DetectGCPCredSource(os.Getenv))
 	return &gcpSource{client: client}, nil
 }
 

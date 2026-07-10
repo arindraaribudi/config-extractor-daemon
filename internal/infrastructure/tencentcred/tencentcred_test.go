@@ -11,6 +11,7 @@ import (
 func resetCache() {
 	cacheMu.Lock()
 	cached = nil
+	cachedSource = ""
 	cacheErr = nil
 	cacheMu.Unlock()
 }

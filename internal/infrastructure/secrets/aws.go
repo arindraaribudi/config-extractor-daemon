@@ -4,13 +4,16 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"strings"
+	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 
 	"github.com/arindraaribudi/config-extractor-daemon/internal/domain"
+	"github.com/arindraaribudi/config-extractor-daemon/internal/infrastructure/source"
 )
 
 const awsLegacyPrefix = "secretsmanager.amazonaws.com/"
@@ -31,6 +34,8 @@ const awsLegacyPrefix = "secretsmanager.amazonaws.com/"
 // secret-id is passed to GetSecretValue (name or full ARN).
 type awsResolver struct{}
 
+var awsCredLogOnce sync.Once
+
 func NewAWSResolver() domain.SecretResolver { return awsResolver{} }
 
 func (awsResolver) Supports(ref string) bool {
@@ -45,6 +50,10 @@ func (awsResolver) Resolve(ctx context.Context, ref string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
+	awsCredLogOnce.Do(func() {
+		log.Printf("aws creds: source=%s region=%s", source.DetectAWSCredSource(os.Getenv), region)
+	})
 
 	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(region))
 	if err != nil {

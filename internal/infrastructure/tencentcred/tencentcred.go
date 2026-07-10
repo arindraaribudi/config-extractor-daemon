@@ -18,12 +18,23 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
 
 	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common"
 )
+
+// sourceLabels mirrors `sources` by index — describes which credential
+// source yielded creds in the chain. First non-nil wins; the label for
+// the winning index is logged at resolve time and cached for the process.
+var sourceLabels = []string{
+	"tke-pod-identity-sts",
+	"env",
+	"tccli-sso",
+	"tccli-profile",
+}
 
 // Credentials holds a Tencent Cloud credential set. Token is non-empty for
 // STS-style creds (TKE pod identity and tccli SSO).
@@ -38,9 +49,10 @@ type Credentials struct {
 var ErrNoCredentials = errors.New("tencent creds: no credentials via TKE pod identity STS, env, tccli SSO, or ~/.tencentcloud/credentials profile")
 
 var (
-	cacheMu  sync.Mutex
-	cached   *Credentials
-	cacheErr error
+	cacheMu      sync.Mutex
+	cached       *Credentials
+	cachedSource string
+	cacheErr     error
 )
 
 // sources is the credential lookup order. First non-nil wins.
@@ -55,27 +67,36 @@ var sources = []func(ctx context.Context) (*Credentials, error){
 // Resolve returns a Credentials value from the first source that yields
 // one. Cached after first success.
 func Resolve(ctx context.Context) (*Credentials, error) {
+	c, _, err := resolve(ctx)
+	return c, err
+}
+
+// resolve is the unexported worker that also returns the source label.
+// Public callers use Resolve; Source is logged here once at first hit.
+func resolve(ctx context.Context) (*Credentials, string, error) {
 	cacheMu.Lock()
 	defer cacheMu.Unlock()
 	if cached != nil {
-		return cached, nil
+		return cached, cachedSource, nil
 	}
 	if cacheErr != nil {
-		return nil, cacheErr
+		return nil, "", cacheErr
 	}
 
-	for _, src := range sources {
+	for i, src := range sources {
 		creds, err := src(ctx)
 		if err != nil {
 			cacheErr = fmt.Errorf("%w: %v", ErrNoCredentials, err)
-			return nil, cacheErr
+			return nil, "", cacheErr
 		}
 		if creds != nil {
 			cached = creds
-			return cached, nil
+			cachedSource = sourceLabels[i]
+			log.Printf("tencent creds: source=%s", cachedSource)
+			return cached, cachedSource, nil
 		}
 	}
-	return nil, ErrNoCredentials
+	return nil, "", ErrNoCredentials
 }
 
 func stsSource(_ context.Context) (*Credentials, error) {
@@ -149,5 +170,6 @@ func ResetForTest() {
 	cacheMu.Lock()
 	defer cacheMu.Unlock()
 	cached = nil
+	cachedSource = ""
 	cacheErr = nil
 }
