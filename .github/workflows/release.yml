@@ -247,6 +247,7 @@ jobs:
     if: needs.release.result == 'success'
     permissions:
       contents: read
+      packages: write
     uses: ./.github/workflows/ci.yml
     with:
       tag: ${{ needs.release.outputs.tag }}
