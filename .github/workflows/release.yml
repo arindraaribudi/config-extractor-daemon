@@ -1,0 +1,252 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump type"
+        required: true
+        type: choice
+        default: patch
+        options:
+          - patch
+          - minor
+          - major
+          - custom
+      custom_version:
+        description: "Explicit semver (only when bump=custom). e.g. 0.2.0"
+        required: false
+        type: string
+        default: ""
+      tag_prefix:
+        description: "Tag prefix"
+        required: false
+        type: string
+        default: "v"
+      prerelease:
+        description: "Mark release as pre-release"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  lint:
+    name: make lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version: "1.26.4"
+          cache: true
+      - run: make lint
+
+  test:
+    name: go test (race)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version: "1.26.4"
+          cache: true
+      - run: make test-race
+
+  coverage:
+    name: go test (coverage)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version: "1.26.4"
+          cache: true
+      # make test-coverage writes coverage.out / coverage.html / coverage.txt
+      # at repo root. The .txt is the paste-friendly summary; last line is
+      # the total statement % used for README badges.
+      - run: make test-coverage
+
+      - name: Echo coverage summary
+        run: tail -n 1 coverage.txt
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: |
+            coverage.out
+            coverage.html
+            coverage.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version: "1.26.4"
+          cache: true
+      - run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - run: "$(go env GOPATH)/bin/govulncheck ./..."
+
+  build:
+    name: go build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version: "1.26.4"
+          cache: true
+      - run: make certs
+      - run: CGO_ENABLED=0 go build -o /tmp/config-extractor-build ./cmd/config-extractor
+
+  release:
+    name: release
+    runs-on: ubuntu-24.04
+    needs: [lint, test, coverage, govulncheck, build]
+    timeout-minutes: 30
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: resolve version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+          CUSTOM: ${{ inputs.custom_version }}
+          PREFIX: ${{ inputs.tag_prefix }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          # Semver with optional prerelease suffix, e.g. 0.2.0 or 0.2.0-rc1
+          semver_re='^([0-9]+)\.([0-9]+)\.([0-9]+)(-[a-zA-Z0-9.]+)?$'
+
+          git fetch --tags --force
+
+          # Highest existing tag, e.g. v0.1.3 -> 0.1.3
+          latest="$(git tag --list "${PREFIX}*" --sort=-version:refname | head -n1 || true)"
+          if [ -n "${latest}" ]; then
+            current="${latest#${PREFIX}}"
+          else
+            current="0.0.0"
+          fi
+
+          if [[ "${current}" =~ ${semver_re} ]]; then
+            major="${BASH_REMATCH[1]}"
+            minor="${BASH_REMATCH[2]}"
+            patch="${BASH_REMATCH[3]}"
+          else
+            echo "::error::Latest tag '${latest:-<none>}' is not semver (${current}). Aborting." >&2
+            exit 1
+          fi
+
+          if [ "${BUMP}" = "custom" ]; then
+            if [ -z "${CUSTOM}" ]; then
+              echo "::error::bump=custom requires custom_version." >&2
+              exit 1
+            fi
+            if [[ "${CUSTOM}" =~ ${semver_re} ]]; then
+              next="${CUSTOM}"
+            else
+              echo "::error::custom_version '${CUSTOM}' is not semver MAJOR.MINOR.PATCH[-suffix]." >&2
+              exit 1
+            fi
+          else
+            case "${BUMP}" in
+              major) next="$((major + 1)).0.0" ;;
+              minor) next="${major}.$((minor + 1)).0" ;;
+              patch) next="${major}.${minor}.$((patch + 1))" ;;
+              *) echo "::error::Unknown bump '${BUMP}'." >&2; exit 1 ;;
+            esac
+          fi
+
+          # Append -rcN suffix when prerelease=true; auto-increments if base+rcN tag exists.
+          # Skip when bump=custom — user controls the suffix in custom_version.
+          if [ "${PRERELEASE}" = "true" ] && [ "${BUMP}" != "custom" ]; then
+            rc_n=1
+            while git rev-parse -q --verify "refs/tags/${PREFIX}${next}-rc${rc_n}" >/dev/null; do
+              rc_n=$((rc_n + 1))
+            done
+            next="${next}-rc${rc_n}"
+          fi
+
+          tag="${PREFIX}${next}"
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            echo "::error::Tag '${tag}' already exists." >&2
+            exit 1
+          fi
+
+          echo "version=${next}" >>"${GITHUB_OUTPUT}"
+          echo "tag=${tag}" >>"${GITHUB_OUTPUT}"
+          echo "Resolved ${tag} (current was ${current}, bump=${BUMP}, prerelease=${PRERELEASE})."
+
+      # No # ASSET_STAGE — image is the release artifact. The `build-ci` job
+      # below chains into ci.yml with the resolved tag to build + push the
+      # multi-arch image (with SBOM + provenance attestations) to GHCR.
+
+      - name: create github release
+        uses: softprops/action-gh-release@v3.0.3
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          generate_release_notes: true
+          prerelease: ${{ inputs.prerelease }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: summary
+        if: always()
+        run: |
+          {
+            echo "### Release ${{ steps.version.outputs.tag }}"
+            echo ""
+            echo "- bump: \`${{ inputs.bump }}\`"
+            echo "- prerelease: \`${{ inputs.prerelease }}\`"
+            echo "- release: \`${{ job.status }}\`"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+  build-ci:
+    name: build + push image
+    needs: release
+    if: needs.release.result == 'success'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+    with:
+      tag: ${{ needs.release.outputs.tag }}
