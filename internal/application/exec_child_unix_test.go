@@ -6,9 +6,11 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
+	"net"
 	"os"
 	"os/exec"
 	"reflect"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -106,7 +108,10 @@ func TestExecChildUseCase_MergesInheritedEnvAndPairs(t *testing.T) {
 // the parent observes it from outside. This is the same pattern os/exec's own
 // tests use.
 
-const helperEnv = "EXEC_CHILD_HELPER_ARGS"
+const (
+	helperEnv        = "EXEC_CHILD_HELPER_ARGS"
+	helperOpenFDsEnv = "EXEC_CHILD_HELPER_OPEN_FDS"
+)
 
 func TestExecHelperProcess(t *testing.T) {
 	raw := os.Getenv(helperEnv)
@@ -114,7 +119,26 @@ func TestExecHelperProcess(t *testing.T) {
 		t.Skip("helper process only")
 	}
 	args := strings.Split(raw, "\x1f")
+	var held []any
+	if os.Getenv(helperOpenFDsEnv) != "" {
+		// What the daemon holds when it execs: after fetching the configuration, a cloud client
+		// leaves open files and sockets behind. Go opens all of them close-on-exec.
+		f, err := os.Open(os.Args[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		conn, err := net.Dial("tcp", ln.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		held = append(held, f, ln, conn)
+	}
 	err := (ExecChildUseCase{Args: args}).Run([]domain.EnvPair{"INJECTED=hello"})
+	runtime.KeepAlive(held) // keeps the descriptors open until the exec; only reached if it failed
 	// Only reached if the exec failed.
 	os.Stderr.WriteString("helper: exec failed: " + err.Error() + "\n")
 	os.Exit(97)
@@ -206,5 +230,30 @@ func TestExecChildUseCase_RealExec_SignalReachesTheCommand(t *testing.T) {
 
 	if err := cmd.Wait(); err != nil {
 		t.Errorf("the command exited 0 from its trap, but Wait returned %v", err)
+	}
+}
+
+// TestExecChildUseCase_RealExec_DoesNotLeakFileDescriptors: the application must start with
+// exactly the descriptors it would have had if it had been launched directly. A descriptor the
+// daemon opened for fetching the configuration (a gRPC socket, a file) must not survive the exec.
+func TestExecChildUseCase_RealExec_DoesNotLeakFileDescriptors(t *testing.T) {
+	list := func(openFDs bool) string {
+		t.Helper()
+		cmd := helperCmd("sh", "-c", `for f in /dev/fd/*; do echo "${f##*/}"; done | sort -n | tr '\n' ' '`)
+		if openFDs {
+			cmd.Env = append(cmd.Env, helperOpenFDsEnv+"=1")
+		}
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("helper failed: %v", err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	base, withOpen := list(false), list(true)
+	if base == "" {
+		t.Skip("cannot list /dev/fd on this system")
+	}
+	if base != withOpen {
+		t.Errorf("descriptors seen by the exec'd command: %q without the daemon holding any, %q with a file and a socket open: they leaked", base, withOpen)
 	}
 }
