@@ -354,6 +354,28 @@ The Dockerfile is a multi-stage scratch build. The CA bundle is embedded at buil
 
 ---
 
+## Pre-commit pipeline
+
+Run every gate the release workflow runs, locally, in the same order, before `git commit` / `git push`. Stops on first failure.
+
+```bash
+make ci
+```
+
+Runs:
+
+1. `make lint` — `go vet` + `gofmt -l` + layer-isolation guard (domain/application may not import any SDK).
+2. `make test-race` — `go test ./... -race` (requires CA bundle; `certs` target runs it for you).
+3. `make test-coverage` — `go test -coverprofile -covermode=atomic` + writes `coverage.out`, `coverage.html`, `coverage.txt`. Last line of `coverage.txt` is the README badge number.
+4. `make govulncheck` — installs `golang.org/x/vuln/cmd/govulncheck@latest` if missing, then scans `./...`. Non-zero exit on reachable vuln (the only kind CI cares about).
+5. `make build-binary` — static binary, `CGO_ENABLED=0`, written to `$(BUILD_OUT)` (default `/tmp/config-extractor-build`).
+
+Individual gates are runnable on their own if you only need one. `make ci` is just a thin shell — same commands the workflow calls, nothing custom.
+
+Go version is pinned to `GO_VERSION ?= 1.26.4` in the `Makefile` (keep it in sync with `.github/workflows/release.yml` → `setup-go`).
+
+---
+
 ## Adding a new secrets backend
 
 1. Create `secret_ref_<cloud>.go`:
