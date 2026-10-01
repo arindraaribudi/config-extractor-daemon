@@ -3,8 +3,11 @@ PLATFORMS    := linux/amd64,linux/arm64
 BUILDER      := multiplatform-builder
 BIN          := config-extractor-daemon
 ENTRY        := ./cmd/config-extractor
+# Pinned to .github/workflows/release.yml (setup-go go-version). Override locally
+# only if you know what you're doing — CI must stay in sync.
+GO_VERSION   ?= 1.27.1
 
-.PHONY: build push build-push load test test-race lint vet fmt fmt-check layer-check certs run run-exec install-bin clean setup-builder tidy
+.PHONY: build build-push push load test test-race test-coverage lint vet fmt fmt-check layer-check certs govulncheck build-binary ci run run-exec install-bin clean setup-builder tidy
 
 ## Build multi-platform image (cache only — no push, no local load)
 build: setup-builder
@@ -79,6 +82,21 @@ certs:
 	fi
 	@echo "certs: installed to internal/infrastructure/tls/certs/"
 
+## CI build — mirrors the build job in .github/workflows/release.yml:
+## static binary, CGO disabled, written to $(BUILD_OUT). Override BUILD_OUT
+## locally to inspect; CI leaves the default.
+BUILD_OUT ?= /tmp/config-extractor-build
+build-binary: certs
+	CGO_ENABLED=0 go build -o $(BUILD_OUT) $(ENTRY)
+
+## Pre-commit pipeline — runs every gate the release workflow runs, locally,
+## in the same order. Stops on first failure. Use before `git commit` /
+## `git push` so CI does not discover what your machine could have caught.
+## Mirrors .github/workflows/release.yml (lint, test-race, coverage, govulncheck, build-binary).
+ci: lint test-race test-coverage govulncheck build-binary
+	@echo ""
+	@echo "ci: all gates green ✅"
+
 ## Run go vet (catches suspicious constructs). Depends on `certs` because
 ## //go:embed in internal/infrastructure/tls fails without the bundle.
 vet: certs
@@ -99,6 +117,16 @@ layer-check:
 		internal/domain internal/application 2>/dev/null); \
 	if [ -n "$$bad" ]; then echo "layer violation (SDK in domain/application):"; echo "$$bad"; exit 1; fi; \
 	echo "layer-check: clean (no SDK imports in domain or application)"
+
+## govulncheck — matches the govulncheck job in .github/workflows/release.yml.
+## Installs (or skips if cached) then scans ./... for known vulns.
+## Exit non-zero on reachable vuln (the only kind that matters).
+govulncheck:
+	@if [ -z "$$(command -v govulncheck)" ]; then \
+		echo "govulncheck: installing..."; \
+		go install golang.org/x/vuln/cmd/govulncheck@latest; \
+	fi
+	$$(go env GOPATH)/bin/govulncheck ./...
 
 ## Run locally in env mode — writes $(OUT) (defaults to .env).
 ## CONFIG_LOCATION and CONFIG_VERSION must be exported in the calling shell
