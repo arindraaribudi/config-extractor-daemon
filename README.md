@@ -133,7 +133,14 @@ go build -o ./env-printer ./cmd/env-printer
 go run . --mode=exec -- ./env-printer
 ```
 
-The child process inherits stdin/stdout/stderr and the host environment, plus the injected `KEY=VALUE` pairs. Non-zero child exits are propagated.
+On Linux and macOS the daemon **replaces itself** with the command (`execve`), so the command inherits stdin/stdout/stderr and the host environment plus the injected `KEY=VALUE` pairs (an injected value wins over an inherited one of the same name). Because nothing is left wrapping it:
+
+- as a container entrypoint the application **is PID 1**: it receives `SIGTERM` from the kubelet directly and can drain in-flight work, and it reaps its own children;
+- the container's exit status is the application's own.
+
+(An earlier version ran the command as a child; as PID 1 the daemon then died on `SIGTERM` and the kernel `SIGKILL`ed the application without it ever seeing the signal.) On Windows, which has no `execve`, the command still runs as a child and its exit code is propagated.
+
+If the command cannot be started (not on `PATH`, not executable) the daemon exits 1 with `exec: ...`.
 
 ---
 
@@ -309,7 +316,8 @@ initContainers:
 containers:
   - name: app
     image: my-app:v1
-    command: ["/shared/bin/config-extractor-daemon", "--mode=exec", "--", "/app/server"]
+    # `--install` writes the binary under its own file name, `config-extractor`.
+    command: ["/shared/bin/config-extractor", "--mode=exec", "--", "/app/server"]
     env:
       - { name: CONFIG_LOCATION, value: "projects/my-proj/locations/global/parameters/app-config" }
       - { name: CONFIG_VERSION,  value: "prod-1" }
@@ -324,7 +332,7 @@ For `--mode=env` workloads, mount the same volume as an output dir and run witho
 containers:
   - name: app
     image: my-app:v1
-    command: ["/shared/bin/config-extractor-daemon", "--out", "/shared/env/.env"]
+    command: ["/shared/bin/config-extractor", "--out", "/shared/env/.env"]
     volumeMounts:
       - { name: shared-bin,  mountPath: /shared/bin }
       - { name: shared-env,  mountPath: /shared/env }

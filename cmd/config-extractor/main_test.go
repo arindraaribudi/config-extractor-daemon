@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -324,44 +326,99 @@ func TestRun_ExecMode_NoArgs(t *testing.T) {
 	}
 }
 
-func TestRun_ExecMode_Success(t *testing.T) {
+// execCall records one invocation of the Exec seam. The real Exec replaces the
+// running process on Linux/macOS, so tests must never reach it.
+type execCall struct {
+	args  []string
+	pairs []domain.EnvPair
+}
+
+func recordingExec(calls *[]execCall, ret error) func([]string, []domain.EnvPair) error {
+	return func(args []string, pairs []domain.EnvPair) error {
+		*calls = append(*calls, execCall{args: args, pairs: pairs})
+		return ret
+	}
+}
+
+func execDeps(t *testing.T, payload domain.Payload) cliDeps {
+	t.Helper()
 	d := baseDeps()
 	d.Getenv = mustEnv(t, map[string]string{
 		"CONFIG_LOCATION": "projects/p/locations/l/parameters/x",
 		"CONFIG_VERSION":  "v1",
 	})
-	d.BuildRegistry = successRegistry("FOO=bar")
-	// `true` is a portable POSIX no-op that exits 0.
-	code := run([]string{"--mode=exec", "--", "true"}, d)
+	d.BuildRegistry = successRegistry(payload)
+	return d
+}
+
+func TestRun_ExecMode_HandsTheCommandAndFetchedVarsToExec(t *testing.T) {
+	d := execDeps(t, "FOO=bar\nBAZ=qux")
+	var calls []execCall
+	d.Exec = recordingExec(&calls, nil)
+
+	code := run([]string{"--mode=exec", "--", "/app/server", "--port", "8080"}, d)
 	if code != 0 {
-		t.Errorf("exec success: code = %d, want 0; stderr=%s", code, d.Stderr.(*bytes.Buffer).String())
+		t.Fatalf("exec success: code = %d, want 0; stderr=%s", code, d.Stderr.(*bytes.Buffer).String())
+	}
+	if len(calls) != 1 {
+		t.Fatalf("Exec called %d times, want 1", len(calls))
+	}
+	if want := []string{"/app/server", "--port", "8080"}; !reflect.DeepEqual(calls[0].args, want) {
+		t.Errorf("exec args = %v, want %v", calls[0].args, want)
+	}
+	if want := []domain.EnvPair{"FOO=bar", "BAZ=qux"}; !reflect.DeepEqual(calls[0].pairs, want) {
+		t.Errorf("exec pairs = %v, want %v", calls[0].pairs, want)
+	}
+	if !strings.Contains(d.Stderr.(*bytes.Buffer).String(), "exec: injecting 2 var(s)") {
+		t.Errorf("expected the injection log line in stderr, got %q", d.Stderr.(*bytes.Buffer).String())
 	}
 }
 
 func TestRun_ExecMode_PropagatesChildExitCode(t *testing.T) {
-	d := baseDeps()
-	d.Getenv = mustEnv(t, map[string]string{
-		"CONFIG_LOCATION": "projects/p/locations/l/parameters/x",
-		"CONFIG_VERSION":  "v1",
-	})
-	d.BuildRegistry = successRegistry("FOO=bar")
-	// `sh -c 'exit 7'` should produce exit code 7.
-	code := run([]string{"--mode=exec", "--", "sh", "-c", "exit 7"}, d)
-	if code != 7 {
+	// The *exec.ExitError path is the Windows fallback (the command runs as a
+	// child there); make a real ExitError by running something that exits 7.
+	exitErr := exec.Command("sh", "-c", "exit 7").Run()
+	var ee *exec.ExitError
+	if !errors.As(exitErr, &ee) {
+		t.Skipf("could not produce an *exec.ExitError on this platform: %v", exitErr)
+	}
+
+	d := execDeps(t, "FOO=bar")
+	var calls []execCall
+	d.Exec = recordingExec(&calls, exitErr)
+	if code := run([]string{"--mode=exec", "--", "anything"}, d); code != 7 {
 		t.Errorf("exec exit propagation: code = %d, want 7", code)
 	}
 }
 
+func TestRun_ExecMode_CommandCouldNotStart(t *testing.T) {
+	d := execDeps(t, "FOO=bar")
+	var calls []execCall
+	d.Exec = recordingExec(&calls, errors.New("executable file not found in $PATH"))
+
+	code := run([]string{"--mode=exec", "--", "no-such-command"}, d)
+	if code != 1 {
+		t.Errorf("exec start failure: code = %d, want 1", code)
+	}
+	if !strings.Contains(d.Stderr.(*bytes.Buffer).String(), "exec: executable file not found") {
+		t.Errorf("expected the start error in stderr, got %q", d.Stderr.(*bytes.Buffer).String())
+	}
+}
+
 func TestRun_ExecMode_EmptyPayloadStillRuns(t *testing.T) {
-	d := baseDeps()
-	d.Getenv = mustEnv(t, map[string]string{
-		"CONFIG_LOCATION": "projects/p/locations/l/parameters/x",
-		"CONFIG_VERSION":  "v1",
-	})
-	d.BuildRegistry = successRegistry("") // empty payload
+	d := execDeps(t, "") // empty payload
+	var calls []execCall
+	d.Exec = recordingExec(&calls, nil)
+
 	code := run([]string{"--mode=exec", "--", "true"}, d)
 	if code != 0 {
 		t.Errorf("exec empty payload: code = %d, want 0", code)
+	}
+	if len(calls) != 1 || len(calls[0].pairs) != 0 {
+		t.Errorf("want one Exec call with no injected vars, got %+v", calls)
+	}
+	if !strings.Contains(d.Stderr.(*bytes.Buffer).String(), "without injected vars") {
+		t.Errorf("expected the 'without injected vars' log line")
 	}
 }
 

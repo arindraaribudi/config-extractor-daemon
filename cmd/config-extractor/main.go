@@ -30,8 +30,16 @@ func main() {
 		Stderr:        os.Stderr,
 		BuildRegistry: defaultBuildRegistry,
 		Resolvers:     defaultResolvers(),
+		Exec:          execChild,
 	}
 	os.Exit(run(os.Args[1:], deps))
+}
+
+// execChild hands the process over to the command in --mode=exec. On Linux and
+// macOS a successful call never returns (the process is replaced); see
+// application.ExecChildUseCase.
+func execChild(args []string, pairs []domain.EnvPair) error {
+	return application.ExecChildUseCase{Args: args}.Run(pairs)
 }
 
 // envGetter abstracts os.Getenv so tests can inject a static env.
@@ -47,6 +55,9 @@ type cliDeps struct {
 	Stderr        io.Writer
 	BuildRegistry func(ctx context.Context, mode domain.FetchMode) []application.SourceEntry
 	Resolvers     []domain.SecretResolver
+	// Exec runs the --mode=exec command. It is a seam because the real one
+	// replaces the running process, which a test could not survive.
+	Exec func(args []string, pairs []domain.EnvPair) error
 }
 
 // fatalf prints to the logger and returns the requested exit code.
@@ -175,8 +186,16 @@ func run(args []string, deps cliDeps) int {
 		} else {
 			logger.Printf("exec: no config loaded from %s@%s — running %s without injected vars", location, version, cmdArgs[0])
 		}
-		if err := (application.ExecChildUseCase{Args: cmdArgs}).Run(resolved.Pairs); err != nil {
-			if exitErr, ok := err.(*exec.ExitError); ok {
+		execFn := deps.Exec
+		if execFn == nil {
+			execFn = execChild
+		}
+		// On Linux/macOS a successful exec never returns, so we only get here
+		// when the command could not be started. The *exec.ExitError case is the
+		// Windows fallback, where the command runs as a child.
+		if err := execFn(cmdArgs, resolved.Pairs); err != nil {
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
 				return exitErr.ExitCode()
 			}
 			return fatalf(logger, 1, "exec: %v", err)
