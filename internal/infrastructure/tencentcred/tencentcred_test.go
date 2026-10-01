@@ -2,6 +2,7 @@ package tencentcred
 
 import (
 	"context"
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
@@ -221,5 +222,65 @@ func TestTccliSSOSource_MissingFields(t *testing.T) {
 	}
 	if got != nil {
 		t.Fatalf("missing fields must return nil creds; got %+v", got)
+	}
+}
+
+func TestParseTKEIssuer_Valid(t *testing.T) {
+	// JWT with iss = https://ap-bangkok-oidc.tke.tencentcs.com/id/abc123
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"iss":"https://ap-bangkok-oidc.tke.tencentcs.com/id/abc123"}`))
+	tok := header + "." + payload + ".signature"
+
+	region, providerID, err := parseTKEIssuer(tok)
+	if err != nil {
+		t.Fatalf("parseTKEIssuer: %v", err)
+	}
+	if region != "ap-bangkok" || providerID != "abc123" {
+		t.Fatalf("got (%q, %q), want (ap-bangkok, abc123)", region, providerID)
+	}
+}
+
+func TestParseTKEIssuer_NotTKEHost(t *testing.T) {
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"iss":"https://accounts.google.com"}`))
+	tok := "h." + payload + ".s"
+
+	if _, _, err := parseTKEIssuer(tok); err == nil {
+		t.Fatal("expected error for non-TKE issuer")
+	}
+}
+
+func TestParseTKEIssuer_NotAJWT(t *testing.T) {
+	if _, _, err := parseTKEIssuer("garbage"); err == nil {
+		t.Fatal("expected error for non-JWT input")
+	}
+}
+
+func TestTKEAutoSource_NoRoleArnReturnsNil(t *testing.T) {
+	t.Setenv("TKE_ROLE_ARN", "")
+	t.Setenv("TKE_WEB_IDENTITY_TOKEN_FILE", "/nonexistent")
+	if got, err := tkeAutoSource(t.Context()); err != nil || got != nil {
+		t.Fatalf("got (%+v, %v), want (nil, nil)", got, err)
+	}
+}
+
+func TestTKEAutoSource_NonTKEIssuerFallsThrough(t *testing.T) {
+	// Write a JWT with a non-TKE iss to the default token path. With
+	// TKE_ROLE_ARN set, parseTKEIssuer should reject and tkeAutoSource
+	// must return (nil, nil) instead of erroring.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "token")
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"iss":"https://accounts.google.com"}`))
+	if err := os.WriteFile(path, []byte("h."+payload+".s"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TKE_ROLE_ARN", "qcs::cam::uin/0:roleName/test")
+	t.Setenv("TKE_WEB_IDENTITY_TOKEN_FILE", path)
+
+	got, err := tkeAutoSource(t.Context())
+	if err != nil {
+		t.Fatalf("non-TKE issuer must fall through; got %v", err)
+	}
+	if got != nil {
+		t.Fatalf("non-TKE issuer must return nil creds; got %+v", got)
 	}
 }
