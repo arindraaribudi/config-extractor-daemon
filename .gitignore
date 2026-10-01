@@ -9,3 +9,4 @@ env-printer
 # (CI). Not committed because it rotates and adds noise to the diff.
 internal/infrastructure/tls/certs/ca-certificates.crt
 coverage.out
+archive
